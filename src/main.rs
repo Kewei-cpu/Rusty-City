@@ -285,7 +285,7 @@ impl Game {
         let reachable = self.reachable_positions(start, 3);
 
         // get all possible moves
-        // the wall placement is possible if the wall is not already placed and the edge is not on the border
+        // the wall placement is possible if the wall is not placed and the edge is not on the border
 
         for y in 0..self.height {
             for x in 0..self.width {
@@ -294,7 +294,7 @@ impl Game {
                 }
 
                 let current = Coordinate::new(x, y);
-                for direction in vec![Direction::Up, Direction::Down, Direction::Left, Direction::Right] {
+                for direction in Direction::values() {
                     let next = current.move_to(direction);
                     if !next.inside(self.width, self.height) {
                         continue;
