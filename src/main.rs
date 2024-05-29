@@ -18,16 +18,6 @@ impl Cell {
     }
 }
 
-impl fmt::Display for Cell {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Cell::Empty => write!(f, "_"),
-            Cell::Blue => write!(f, "B"),
-            Cell::Green => write!(f, "G"),
-        }
-    }
-}
-
 impl fmt::Debug for Cell {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -56,15 +46,6 @@ impl Board {
     fn set(&mut self, coordinate: Coordinate, cell: Cell) {
         self.board_matrix[coordinate.y as usize][coordinate.x as usize] = cell;
     }
-
-    fn print(&self) {
-        for row in &self.board_matrix {
-            for cell in row {
-                print!("{:?} ", cell);
-            }
-            println!();
-        }
-    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -85,11 +66,8 @@ impl Direction {
         }
     }
 
-    fn horizontal(self) -> bool {
-        match self {
-            Direction::Left | Direction::Right => true,
-            Direction::Up | Direction::Down => false,
-        }
+    fn values() -> Vec<Direction> {
+        vec![Direction::Up, Direction::Down, Direction::Left, Direction::Right]
     }
 }
 
@@ -124,10 +102,6 @@ impl Coordinate {
     fn move_to(self, direction: Direction) -> Coordinate {
         self + direction.relative_position()
     }
-
-    fn distance(self, other: Coordinate) -> i32 {
-        (self.x - other.x).abs() + (self.y - other.y).abs()
-    }
 }
 
 impl PartialEq for Coordinate {
@@ -148,6 +122,42 @@ impl Add<Coordinate> for Coordinate {
 struct Move {
     destination: Coordinate,
     place_wall: Direction,
+}
+
+impl Move {
+    fn new(destination: Coordinate, place_wall: Direction) -> Move {
+        Move { destination, place_wall }
+    }
+
+
+    fn from_notation(notation: &str) -> Move {
+        let destination = Coordinate::new(
+            notation.chars().nth(0).unwrap() as i32 - 'A' as i32,
+            7 - notation.chars().nth(1).unwrap() as i32 + '0' as i32,
+        );
+        let place_wall = match notation.chars().nth(2).unwrap() {
+            'U' => Direction::Up,
+            'D' => Direction::Down,
+            'L' => Direction::Left,
+            'R' => Direction::Right,
+            _ => panic!("Invalid move notation"),
+        };
+
+        Move::new(destination, place_wall)
+    }
+}
+
+#[derive(Debug)]
+struct Score {
+    blue: i32,
+    green: i32,
+}
+
+#[derive(Debug)]
+enum Winner {
+    Blue,
+    Green,
+    Draw,
 }
 
 
@@ -182,9 +192,9 @@ impl Game {
         // print the cells and walls
         // use table characters
 
-        println!("┌───┬───┬───┬───┬───┬───┬───┐");
+        println!("  ┌───┬───┬───┬───┬───┬───┬───┐");
         for y in 0..self.width {
-            print!("│ ");
+            print!("{} │ ", 7 - y);
 
             for x in 0..self.height {
                 let cell_coordinate = Coordinate::new(x, y);
@@ -210,7 +220,7 @@ impl Game {
             println!();
 
             if y < self.width - 1 {
-                print!("├");
+                print!("  ├");
                 for x in 0..self.height {
                     let cell_coordinate = Coordinate::new(x, y);
 
@@ -226,7 +236,42 @@ impl Game {
                 println!();
             }
         }
-        println!("└───┴───┴───┴───┴───┴───┴───┘");
+        println!("  └───┴───┴───┴───┴───┴───┴───┘");
+        println!("    A   B   C   D   E   F   G");
+    }
+
+    fn reachable_positions(&self, start: Coordinate, step: i32) -> Vec<Vec<bool>> {
+        let mut reachable = vec![vec![false; self.width as usize]; self.height as usize];
+        let mut queue = Vec::new();
+        queue.push((start, 0));
+
+        while !queue.is_empty() {
+            let (current, current_step) = queue.remove(0);
+            if current_step == step {
+                continue;
+            }
+
+            for direction in Direction::values() {
+                let next = current.move_to(direction);
+                if !next.inside(self.width, self.height) {
+                    continue;
+                }
+
+                if reachable[next.y as usize][next.x as usize] {
+                    continue;
+                }
+
+                if direction == Direction::Right && self.vertical_walls.get(current).is_empty() ||
+                    direction == Direction::Left && self.vertical_walls.get(next).is_empty() ||
+                    direction == Direction::Down && self.horizontal_walls.get(current).is_empty() ||
+                    direction == Direction::Up && self.horizontal_walls.get(next).is_empty() {
+                    queue.push((next, current_step + 1));
+                    reachable[next.y as usize][next.x as usize] = true;
+                }
+            }
+        }
+
+        reachable
     }
 
     fn possible_moves(&self) -> Vec<Move> {
@@ -237,49 +282,14 @@ impl Game {
             self.green_position
         };
 
-        // bfs to find all possible moves(not include placing wall) in 3 steps
-        let mut queue = Vec::new();
-        let mut visited = vec![vec![false; self.width as usize]; self.height as usize];
-        queue.push((start, 0));
-
-        while !queue.is_empty() {
-            let (current, step) = queue.remove(0);
-            if visited[current.y as usize][current.x as usize] {
-                continue;
-            }
-            visited[current.y as usize][current.x as usize] = true;
-
-            if step == 3 {
-                continue;
-            }
-
-            for direction in vec![Direction::Up, Direction::Down, Direction::Left, Direction::Right] {
-                let next = current.move_to(direction);
-                if !next.inside(self.width, self.height) {
-                    continue;
-                }
-
-                if self.blue_turn && next == self.green_position ||
-                    !self.blue_turn && next == self.blue_position {
-                    continue;
-                }
-
-                if direction == Direction::Right && self.vertical_walls.get(current).is_empty() ||
-                    direction == Direction::Left && self.vertical_walls.get(next).is_empty() ||
-                    direction == Direction::Down && self.horizontal_walls.get(current).is_empty() ||
-                    direction == Direction::Up && self.horizontal_walls.get(next).is_empty() {
-                    queue.push((next, step + 1));
-                }
-            }
-        };
-
+        let reachable = self.reachable_positions(start, 3);
 
         // get all possible moves
         // the wall placement is possible if the wall is not already placed and the edge is not on the border
 
         for y in 0..self.height {
             for x in 0..self.width {
-                if visited[y as usize][x as usize] == false {
+                if !reachable[y as usize][x as usize] {
                     continue;
                 }
 
@@ -306,41 +316,6 @@ impl Game {
         moves
     }
 
-    fn game_over(&self) -> bool {
-        //     the game is over when the green player can't reach the blue player
-        let mut queue = Vec::new();
-        let mut visited = vec![vec![false; self.width as usize]; self.height as usize];
-        queue.push(self.blue_position);
-
-        while !queue.is_empty() {
-            let current = queue.remove(0);
-            if visited[current.y as usize][current.x as usize] {
-                continue;
-            }
-            if current == self.green_position {
-                return false;
-            }
-            visited[current.y as usize][current.x as usize] = true;
-
-
-            for direction in vec![Direction::Up, Direction::Down, Direction::Left, Direction::Right] {
-                let next = current.move_to(direction);
-                if !next.inside(self.width, self.height) {
-                    continue;
-                }
-
-                if direction == Direction::Right && self.vertical_walls.get(current).is_empty() ||
-                    direction == Direction::Left && self.vertical_walls.get(next).is_empty() ||
-                    direction == Direction::Down && self.horizontal_walls.get(current).is_empty() ||
-                    direction == Direction::Up && self.horizontal_walls.get(next).is_empty() {
-                    queue.push(next);
-                }
-            }
-        };
-
-        true
-    }
-
     fn make_move(&mut self, mv: Move) -> bool {
         // make the move
         // if mv is in possible_moves, then make the move and place
@@ -357,49 +332,87 @@ impl Game {
             self.green_position = mv.destination;
         }
 
+        let cell = if self.blue_turn { Cell::Blue } else { Cell::Green };
+
         match mv.place_wall {
-            Direction::Up => {
-                self.horizontal_walls.set(mv.destination.move_to(Direction::Up), if self.blue_turn { Cell::Blue } else { Cell::Green });
-            }
-            Direction::Down => {
-                self.horizontal_walls.set(mv.destination, if self.blue_turn { Cell::Blue } else { Cell::Green });
-            }
-            Direction::Left => {
-                self.vertical_walls.set(mv.destination.move_to(Direction::Left), if self.blue_turn { Cell::Blue } else { Cell::Green });
-            }
-            Direction::Right => {
-                self.vertical_walls.set(mv.destination, if self.blue_turn { Cell::Blue } else { Cell::Green });
-            }
+            Direction::Up => self.horizontal_walls.set(mv.destination.move_to(Direction::Up), cell),
+            Direction::Down => self.horizontal_walls.set(mv.destination, cell),
+            Direction::Left => self.vertical_walls.set(mv.destination.move_to(Direction::Left), cell),
+            Direction::Right => self.vertical_walls.set(mv.destination, cell),
         }
 
         self.blue_turn = !self.blue_turn;
         true
+    }
+
+    fn game_over(&self) -> bool {
+        //     the game is over when the green player can't reach the blue player
+
+        let blue_reachable = self.reachable_positions(self.blue_position, self.height * self.height);
+
+        if !blue_reachable[self.green_position.y as usize][self.green_position.x as usize] {
+            return true;
+        }
+        false
+    }
+
+    fn game_result(&self) -> (Winner, Score) {
+        // the score is the area of the player can reach
+
+        let blue_reachable = self.reachable_positions(self.blue_position, self.height * self.height);
+        let green_reachable = self.reachable_positions(self.green_position, self.height * self.height);
+
+        let mut blue_score = 0;
+        let mut green_score = 0;
+
+        for y in 0..self.height {
+            for x in 0..self.width {
+                if blue_reachable[y as usize][x as usize] {
+                    blue_score += 1;
+                }
+                if green_reachable[y as usize][x as usize] {
+                    green_score += 1;
+                }
+            }
+        };
+
+        let score = Score { blue: blue_score, green: green_score };
+
+        match blue_score.cmp(&green_score) {
+            std::cmp::Ordering::Greater => (Winner::Blue, score),
+            std::cmp::Ordering::Less => (Winner::Green, score),
+            std::cmp::Ordering::Equal => (Winner::Draw, score),
+        }
     }
 }
 
 fn main() {
     let mut game = Game::new(7, 7);
 
-    game.print();
+    loop {
+        game.print();
+        println!("Now it's {}'s turn", if game.blue_turn { "Blue" } else { "Green" });
 
-    game.make_move(Move {
-        destination: Coordinate::new(0, 1),
-        place_wall: Direction::Down,
-    });
+        loop {
+            println!("Enter your move: ");
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input).unwrap();
 
-    game.print();
+            let mv = Move::from_notation(input.trim());
+            let res = game.make_move(mv);
+            if res {
+                break;
+            }
+            println!("Invalid move");
+        }
 
-    game.make_move(Move {
-        destination: Coordinate::new(5, 5),
-        place_wall: Direction::Right,
-    });
+        if game.game_over() {
+            game.print();
+            let (winner, score) = game.game_result();
+            println!("Game over, {:?} wins!", winner);
+            println!("{0} - {1}", score.blue, score.green);
 
-    game.print();
-
-    // println!("Game over: {}", game.game_over());
-
-    // game.horizontal_walls.set(Coordinate::new(0, 0), Cell::Blue);
-    // game.print();
-    //
-    // println!("Game over: {}", game.game_over());
+            break;
+        }
+    }
 }
