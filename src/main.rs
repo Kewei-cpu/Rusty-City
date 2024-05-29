@@ -1,6 +1,5 @@
 use std::cmp::PartialEq;
 use std::ops::Add;
-use std::env::current_exe;
 use std::fmt;
 
 #[derive(Clone)]
