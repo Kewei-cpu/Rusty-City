@@ -1,8 +1,12 @@
+use std::arch::x86_64::_mm_or_pd;
 use std::cmp::PartialEq;
 use std::ops::Add;
 use std::fmt;
+use std::time;
 
-#[derive(Clone)]
+use rand::Rng;
+
+#[derive(Copy, Clone)]
 enum Cell {
     Empty,
     Blue,
@@ -28,23 +32,37 @@ impl fmt::Debug for Cell {
 }
 
 
-struct Board {
-    board_matrix: Vec<Vec<Cell>>,
+struct Board<T> {
+    board_matrix: Vec<Vec<T>>,
 }
 
-impl Board {
-    fn new(width: i32, height: i32) -> Board {
+impl<T: Copy> Board<T> {
+    fn new(width: i32, height: i32, default: T) -> Board<T> {
         Board {
-            board_matrix: vec![vec![Cell::Empty; width as usize]; height as usize],
+            board_matrix: vec![vec![default; width as usize]; height as usize],
         }
     }
 
-    fn get(&self, coordinate: Coordinate) -> &Cell {
+    fn get(&self, coordinate: Coordinate) -> &T {
         &self.board_matrix[coordinate.y as usize][coordinate.x as usize]
     }
 
-    fn set(&mut self, coordinate: Coordinate, cell: Cell) {
-        self.board_matrix[coordinate.y as usize][coordinate.x as usize] = cell;
+    fn set(&mut self, coordinate: Coordinate, value: T) {
+        self.board_matrix[coordinate.y as usize][coordinate.x as usize] = value;
+    }
+}
+
+impl Board<bool> {
+    fn total(&self) -> i32 {
+        let mut total = 0;
+        for row in &self.board_matrix {
+            for cell in row {
+                if *cell {
+                    total += 1;
+                }
+            }
+        }
+        total
     }
 }
 
@@ -118,7 +136,7 @@ impl Add<Coordinate> for Coordinate {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct Move {
     destination: Coordinate,
     place_wall: Direction,
@@ -168,8 +186,8 @@ struct Game {
     blue_position: Coordinate,
     green_position: Coordinate,
 
-    horizontal_walls: Board, // 0 for no wall, 1 for blue wall, 2 for green wall
-    vertical_walls: Board,
+    horizontal_walls: Board<Cell>, // 0 for no wall, 1 for blue wall, 2 for green wall
+    vertical_walls: Board<Cell>,
 
     blue_turn: bool, // true for blue, false for green
 }
@@ -182,8 +200,8 @@ impl Game {
             height,
             blue_position: Coordinate::new(0, 0), // the top-left corner
             green_position: Coordinate::new(width - 1, height - 1), // bottom-right corner
-            horizontal_walls: Board::new(width, height - 1),
-            vertical_walls: Board::new(width - 1, height),
+            horizontal_walls: Board::new(width, height - 1, Cell::Empty),
+            vertical_walls: Board::new(width - 1, height, Cell::Empty),
             blue_turn: true,
         }
     }
@@ -192,9 +210,15 @@ impl Game {
         // print the cells and walls
         // use table characters
 
-        println!("  ┌───┬───┬───┬───┬───┬───┬───┐");
+        print!("  ┌");
+        for x in 0..self.height {
+            if x != 0 { print!("┬"); }
+            print!("───");
+        }
+        println!("┐");
+
         for y in 0..self.width {
-            print!("{} │ ", 7 - y);
+            print!("{} │ ", self.height - y);
 
             for x in 0..self.height {
                 let cell_coordinate = Coordinate::new(x, y);
@@ -231,17 +255,26 @@ impl Game {
                         print!("━━━");
                     }
                 }
-                print!("┤");
-
-                println!();
+                println!("┤");
             }
         }
-        println!("  └───┴───┴───┴───┴───┴───┴───┘");
-        println!("    A   B   C   D   E   F   G");
+
+        print!("  └");
+        for x in 0..self.height {
+            if x != 0 { print!("┴"); }
+            print!("───");
+        }
+        println!("┘");
+
+        print!("    ");
+        for x in 0..self.height {
+            print!("{}   ", (b'A' + x as u8) as char);
+        }
+        println!();
     }
 
-    fn reachable_positions(&self, start: Coordinate, step: i32) -> Vec<Vec<bool>> {
-        let mut reachable = vec![vec![false; self.width as usize]; self.height as usize];
+    fn reachable_positions(&self, start: Coordinate, step: i32) -> Board<bool> {
+        let mut reachable = Board::new(self.width, self.height, false);
         let mut queue = Vec::new();
         queue.push((start, 0));
 
@@ -257,7 +290,7 @@ impl Game {
                     continue;
                 }
 
-                if reachable[next.y as usize][next.x as usize] {
+                if *reachable.get(next) {
                     continue;
                 }
 
@@ -266,7 +299,8 @@ impl Game {
                     direction == Direction::Down && self.horizontal_walls.get(current).is_empty() ||
                     direction == Direction::Up && self.horizontal_walls.get(next).is_empty() {
                     queue.push((next, current_step + 1));
-                    reachable[next.y as usize][next.x as usize] = true;
+
+                    reachable.set(next, true);
                 }
             }
         }
@@ -289,7 +323,7 @@ impl Game {
 
         for y in 0..self.height {
             for x in 0..self.width {
-                if !reachable[y as usize][x as usize] {
+                if !reachable.get(Coordinate::new(x, y)) {
                     continue;
                 }
 
@@ -316,13 +350,13 @@ impl Game {
         moves
     }
 
-    fn make_move(&mut self, mv: Move) -> bool {
+    fn make_move(&mut self, mv: Move, safe: bool) -> bool {
         // make the move
         // if mv is in possible_moves, then make the move and place
 
         // return true if the move is made, false otherwise
 
-        if !self.possible_moves().contains(&mv) {
+        if safe && !self.possible_moves().contains(&mv) {
             return false;
         }
 
@@ -350,7 +384,7 @@ impl Game {
 
         let blue_reachable = self.reachable_positions(self.blue_position, self.height * self.height);
 
-        if !blue_reachable[self.green_position.y as usize][self.green_position.x as usize] {
+        if !blue_reachable.get(self.green_position) {
             return true;
         }
         false
@@ -367,10 +401,11 @@ impl Game {
 
         for y in 0..self.height {
             for x in 0..self.width {
-                if blue_reachable[y as usize][x as usize] {
+                let pos = Coordinate::new(x, y);
+                if *blue_reachable.get(pos) {
                     blue_score += 1;
                 }
-                if green_reachable[y as usize][x as usize] {
+                if *green_reachable.get(pos) {
                     green_score += 1;
                 }
             }
@@ -384,35 +419,69 @@ impl Game {
             std::cmp::Ordering::Equal => (Winner::Draw, score),
         }
     }
+
+    fn play(width: i32, height: i32) {
+        let mut game = Game::new(width, height);
+
+        loop {
+            println!("===============================");
+            println!("     Welcome to Rusty City! ");
+            println!("===============================");
+
+
+            game.print();
+            println!("Now it's {}'s turn", if game.blue_turn { "Blue" } else { "Green" });
+
+            loop {
+                println!("Enter your move: ");
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input).unwrap();
+
+                let mv = Move::from_notation(input.trim());
+                let res = game.make_move(mv, true);
+                if res {
+                    break;
+                }
+                println!("Invalid move");
+            }
+
+            if game.game_over() {
+                game.print();
+                let (winner, score) = game.game_result();
+                println!("Game over, {:?} wins!", winner);
+                println!("{0} - {1}", score.blue, score.green);
+
+                break;
+            }
+        }
+    }
+
+    fn benchmark(games: i32) {
+        let mut moves = 0;
+        let time = time::Instant::now();
+
+        for _ in 0..games {
+            let mut game = Game::new(7, 7);
+            loop {
+                let possible_moves = game.possible_moves();
+
+                // randomly select a move
+                let mv = possible_moves[Rng::gen_range(&mut rand::thread_rng(), 0.. possible_moves.len())];
+                game.make_move(mv, false);
+                moves += 1;
+
+                if game.game_over() {
+                    break;
+                }
+            }
+        }
+        println!("Played {} games with {} moves in {:?}", games, moves, time.elapsed());
+        println!("Average time per game: {:?}", time.elapsed() / games as u32);
+        println!("Average time per move: {:?}", time.elapsed() / moves);
+    }
 }
 
 fn main() {
-    let mut game = Game::new(7, 7);
-
-    loop {
-        game.print();
-        println!("Now it's {}'s turn", if game.blue_turn { "Blue" } else { "Green" });
-
-        loop {
-            println!("Enter your move: ");
-            let mut input = String::new();
-            std::io::stdin().read_line(&mut input).unwrap();
-
-            let mv = Move::from_notation(input.trim());
-            let res = game.make_move(mv);
-            if res {
-                break;
-            }
-            println!("Invalid move");
-        }
-
-        if game.game_over() {
-            game.print();
-            let (winner, score) = game.game_result();
-            println!("Game over, {:?} wins!", winner);
-            println!("{0} - {1}", score.blue, score.green);
-
-            break;
-        }
-    }
+    Game::play(7, 7);
+    // Game::benchmark(10000);
 }
