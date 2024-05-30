@@ -1,4 +1,3 @@
-use std::arch::x86_64::_mm_or_pd;
 use std::cmp::PartialEq;
 use std::ops::Add;
 use std::fmt;
